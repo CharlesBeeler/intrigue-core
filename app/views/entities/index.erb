@@ -8,10 +8,22 @@ Task Results Count: <%= Intrigue::Model::TaskResult.scope_by_project(@project_na
     <input type="text" class="form-control sm" id="entity_name" name="entity_name" size=10>
     <input class="btn btn-primary" type="submit" value="Search">
   </form>
+
+  <form method="post" action="<%=@project_name%>/task_result/multi">
   <ul>
+    <li><input type="checkbox" name="entities" value="all"> All</li>
     <% @entities.each do |entity| %>
-      <li><a href="/v1/<%=@project_name%>/entities/<%=entity.id%>"><%= h entity %></a></li>
+      <li>
+        <input type="checkbox" name="entities" value=<%=entity.id%>>
+        <a href="/v1/<%=@project_name%>/entities/<%=entity.id%>"> <%= h entity %> </a>
+      </li>
     <% end %>
   </ul>
+  </select>
+  </form>
+
   <%= @entities.pager.to_html("/v1/#{@project_name}/entities?entity_name=#{@entity_name}") %>
 </div>
+<div class="col-sm-6">
+  <%= erb :'tasks/_task_runner', :layout => false %>
+</div

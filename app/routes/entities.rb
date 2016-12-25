@@ -13,6 +13,9 @@ class IntrigueApp < Sinatra::Base
         @entities = scoped_entities.page(@page_id, :per_page => 50)
       end
 
+      @multi_task_run = true
+      @task_classes = Intrigue::TaskFactory.list
+
       erb :'entities/index'
     end
 
@@ -28,14 +31,18 @@ class IntrigueApp < Sinatra::Base
         @entities = scoped_entities.page(@page_id, :per_page => 50)
       end
 
+      @multi_task_run = true
+      @task_classes = Intrigue::TaskFactory.list
+
       erb :'entities/index'
     end
 
 
    get '/:project/entities/:id' do
+     @single = true
+
       @entity = Intrigue::Model::Entity.scope_by_project(@project_name).first(:id => params[:id])
       return "No such entity in this project" unless @entity
-
       @task_classes = Intrigue::TaskFactory.list
 
       erb :'entities/detail'

@@ -4,6 +4,7 @@ class IntrigueApp < Sinatra::Base
 
     # Kick off a task
     get '/:project/task/?' do
+
       @page = params["page"]
       # if we receive an entity_id or a task_result_id, instanciate the object
       if params["entity_id"]

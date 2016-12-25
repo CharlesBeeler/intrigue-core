@@ -30,10 +30,10 @@
     </div>
   </div>
   <!-- Get all attributes and use this to create an entity -->
-  <% if @entity %>
+  <% if @entity && !@multi_task_run %>
       <%= @entity.form  %>
       <input type="hidden" name="entity_id" value="<%=@entity.id%>">
-  <% else %>
+  <% elsif !@multi_task_run %>
     <div class="form-group">
       <label for="entity_type" class="col-xs-4 control-label">Entity Type</label>
       <div class="col-xs-6">
@@ -46,6 +46,8 @@
         <input type="text" class="form-control input-sm" id="attrib_name" name="attrib_name">
       </div>
     </div>
+  <% else%>
+   <!-- multiselect: showing only task and recursion -->  
   <% end %>
 
   <div id="options"></div>
