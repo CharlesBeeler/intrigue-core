@@ -25,7 +25,7 @@ class DnsBruteSubTask < BaseTask
             "admin", "service", "tools", "doc", "docs", "network", "help",
             "en", "sharepoint", "portal", "public", "private", "pub", "zeus",
             "mickey", "time", "web", "it", "my", "photos", "safe", "download",
-            "dl", "search", "staging", "fw", "firewall"]  },
+            "dl", "search", "staging", "fw", "firewall", "email"]  },
         {:name => "use_mashed_domains", :type => "Boolean", :regex => "boolean", :default => false },
         {:name => "use_permutations", :type => "Boolean", :regex => "boolean", :default => true },
         {:name => "use_file", :type => "Boolean", :regex => "boolean", :default => false },
@@ -56,7 +56,7 @@ class DnsBruteSubTask < BaseTask
     # XXX - use the resolver option if we have it.
     # Note that we have to specify an empty search list, otherwise we end up
     # searching .local by default on osx.
-    resolver = Resolv.new([Resolv::DNS.new(:nameserver => opt_resolver,:search => [])])
+    @resolver = Resolv.new([Resolv::DNS.new(:nameserver => opt_resolver,:search => [])])
 
     # Handle cases of *.test.com (pretty common when grabbing
     # DNSRecords from SSLCertificates)
@@ -66,7 +66,7 @@ class DnsBruteSubTask < BaseTask
 
     # Create the brute list (from a file, or a provided list)
     if opt_use_file
-      _log "Using file #{opt_filename}"
+      _log "Using file: #{opt_filename}"
       subdomain_list = File.open("#{$intrigue_basedir}/data/#{opt_filename}","r").read.split("\n")
     else
       _log "Using provided brute list"
@@ -76,27 +76,11 @@ class DnsBruteSubTask < BaseTask
 
     # Check for wildcard DNS, modify behavior appropriately. (Only create entities
     # when we know there's a new host associated)
-    wildcard_ips = []
-    wildcard_domain = true
-    begin
-      wildcard_ip = resolver.getaddress("#{(0...12).map { (65 + rand(26)).chr }.join.downcase}.#{suffix}")
-      if wildcard_ip
-        _log "Wildcard domain detected!"
-        
-        # Now we test for crazy setups... things that return a bunch of addresses no matter what...
-        500.times do |x|
-          wildcard_ips << resolver.getaddress("#{(0...12).map { (65 + rand(26)).chr }.join.downcase}.#{suffix}")
-        end
-
-        _log "Saving... #{wildcard_ips.sort.uniq}"
-
-        wildcard_ips.sort.uniq.each {|i| _create_entity "IpAddress", "name" => "#{i}" }
-      end
-    rescue Errno::ENETUNREACH => e
-      _log_error "Hit exception: #{e}. Are you sure you're connected?"
-    rescue Resolv::ResolvError
-      _log_good "Looks like no wildcard dns. Moving on."
-    end
+    wildcard_ips = _check_wildcard(suffix)
+    #unless wildcard_ips.empty?
+      # Go ahead and log this, since we'll want to tell the user what's happening.
+    #  wildcard_ips.sort.uniq.each {|i| _create_entity "IpAddress", "name" => "#{i}" }
+    #end
 
     # Generate alphanumeric list of hostnames and add them to the end of the list
     if opt_brute_alphanumeric_size
@@ -136,16 +120,17 @@ class DnsBruteSubTask < BaseTask
               depth = work_item[:depth]
 
               # Prevent us from going down a hole (some subdomains will resolve anything under them)
-              return if depth > 4
+              if depth > 3
+                _log_error "Got too deep, returning!"
+                return
+              end
 
               # Try to resolve
-              resolved_address = resolver.getaddress(fqdn)
-              _log_good "Resolved Address #{resolved_address} for #{fqdn}" if resolved_address
-
-              # If we resolved, create the right entities
-              if resolved_address
+              resolved_address = _resolve(fqdn)
+              if resolved_address # If we resolved, create the right entities
 
                 unless wildcard_ips.include?(resolved_address)
+                  _log_good "Resolved address #{resolved_address} for #{fqdn} and it wasn't in our wildcard list."
 
                   # Create new host and domain entities
                   _create_entity("DnsRecord", {"name" => "#{fqdn}", "ip_address" => "#{resolved_address}" })
@@ -193,12 +178,23 @@ class DnsBruteSubTask < BaseTask
                       "#{subdomain}-www"
                     ]
 
-                    _log "Adding permutations: #{permutation_list.join(", ")}"
-                    permutation_list.each do |p|
-                      work_q.push({:subdomain => "#{p}", :fqdn => "#{p}.#{suffix}", :depth => depth+1})
+                    # test to first make sure we don't have a subdomain specific wildcard
+                    subdomain_wildcard_ips = _check_wildcard(fqdn)
+
+                    # Before we iterate on this subdomain, let's make sure it's not a wildcard
+                    if subdomain_wildcard_ips.empty?
+                      _log "Adding permutations: #{permutation_list.join(", ")}"
+                      permutation_list.each do |p|
+                        work_q.push({:subdomain => "#{p}", :fqdn => "#{p}.#{suffix}", :depth => depth+1})
+                      end
+                    else
+                      _log "Avoiding permutations on #{fqdn} because it appears to be a wildcard."
                     end
-                  end
+                  end # end opt_use_permutations
+                else
+                  _log "Resolved address #{resolved_address} for #{fqdn} but it resolved to a known wildcard."
                 end
+
               end
             rescue Errno::ENETUNREACH => e
               _log_error "Hit exception: #{e}. Are you sure you're connected?"
@@ -212,5 +208,58 @@ class DnsBruteSubTask < BaseTask
     end; "ok"
     workers.map(&:join); "ok"
   end
+
+  def _resolve(hostname)
+    begin
+      x = @resolver.getaddress(hostname)
+    rescue Errno::ENETUNREACH => e
+      _log_error "Hit exception: #{e}. Are you sure you're connected?"
+    rescue Resolv::ResolvError => e
+      _log "Unable to resolve: #{e}."
+    end
+  x
+  end
+
+  # Check for wildcard DNS
+  def _check_wildcard(suffix)
+    _log "Checking for wildcards on #{suffix}."
+
+    wildcard_ips = []
+      # First we look for a single address that won't exist
+      5.times do
+        random_string = "#{(0...8).map { (65 + rand(26)).chr }.join.downcase}.#{suffix}"
+        resolved_address = _resolve(random_string)
+        wildcard_ips << resolved_address unless resolved_address.nil?
+      end
+
+      # If that resolved, we know that we're in a wildcard situation.
+      #
+      # Some domains have a pool of IPs that they'll resolve to, so
+      # let's go ahead and test a bunch of different domains to try
+      # and collect those IPs. This number (250) is somewhat
+      # arbitrarily chosen but seems to generally work in practice.
+      if wildcard_ips.uniq.count > 1
+        _log "Multiple wildcard ips for #{suffix} after resolving these: #{wildcard_ips}."
+        _log "Trying to create an exhaustive list."
+
+        # Now we have to test for things that return a block of addresses as a wildcard.
+        # 300 is hardcoded here, but we may want to consider something adaptive (to a point)
+        300.times do |x|
+          random_string = "#{(0...8).map { (65 + rand(26)).chr }.join.downcase}.#{suffix}"
+          resolved_address = _resolve(random_string)
+          wildcard_ips << resolved_address unless resolved_address.nil?
+        end
+
+        _log "Got these wildcard ips: #{wildcard_ips.sort.uniq}"
+      elsif wildcard_ips.uniq.count == 1
+        _log "Only a single wildcard ip: #{wildcard_ips.sort.uniq}"
+      else
+        _log "No wildcard detected! Moving on!"
+      end
+
+  wildcard_ips.uniq # if it's not a wildcard, this will be an empty array.
+  end
+
+
 end
 end
